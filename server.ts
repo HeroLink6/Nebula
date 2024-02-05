@@ -1,17 +1,18 @@
-const fastify = require("fastify");
-const fastifyStatic = require("@fastify/static");
-const { fileURLToPath } = require("url");
-const path = require("path");
-const fs = require("fs");
-const { createBareServer } = require("@nebula-services/bare-server-node");
-const { createServer } = require("http");
-const cookieParser = require("@fastify/cookie");
+import fastify from "fastify";
+import fastifyStatic from "@fastify/static";
+import { fileURLToPath } from "url";
+import path from "path";
+import fs from "fs";
+import createRammerhead from "rammerhead/src/server/index.js";
+import cookieParser from "@fastify/cookie";
+import { createBareServer } from "@nebula-services/bare-server-node";
+import { createServer } from "http";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const bare = createBareServer("/bare/");
-const rh = require("rammerhead/src/server/index.js").default();
+const rh = createRammerhead();
 
 const failureFile = fs.readFileSync("Checkfailed.html", "utf8");
 
@@ -76,11 +77,56 @@ const serverFactory = (handler, opts) => {
 const app = fastify({ logger: true, serverFactory });
 
 app.register(cookieParser);
-app.register(require("@fastify/compress"));
+await app.register(
+  import("@fastify/compress")
+  );
 
 // Uncomment if you wish to add masqr.
 /* app.addHook("preHandler", async (req, reply) => {
-    // ... (unchanged)
+    if (req.cookies["authcheck"]) {
+      return;
+    }
+
+    const authheader = req.headers.authorization;
+
+    if (req.cookies["refreshcheck"] != "true") {
+      reply
+        .setCookie("refreshcheck", "true", { maxAge: 10000 })
+        .type("text/html")
+        .send(failureFile);
+      return;
+    }
+
+    if (!authheader) {
+      reply
+        .code(401)
+        .header("WWW-Authenticate", "Basic")
+        .type("text/html")
+        .send(failureFile);
+      return;
+    }
+
+    const auth = Buffer.from(authheader.split(" ")[1], "base64")
+      .toString()
+      .split(":");
+    const user = auth[0];
+    const pass = auth[1];
+
+    const licenseCheck = (
+      await (
+        await fetch(`${LICENSE_SERVER_URL}${pass}&host=${req.headers.host}`)
+      ).json()
+    )["status"];
+    console.log(
+      `${LICENSE_SERVER_URL}${pass}&host=${req.headers.host} returned ${licenseCheck}`
+    );
+
+    if (licenseCheck === "License valid") {
+      reply.setCookie("authcheck", "true");
+      return;
+    }
+
+    reply.type("text/html").send(failureFile);
 }); */
 
 app.register(fastifyStatic, {
@@ -91,7 +137,7 @@ app.register(fastifyStatic, {
 });
 
 app.get("/search=:query", async (req, res) => {
-  const { query } = req.params; // Define the type for req.params
+  const { query } = req.params as { query: string }; // Define the type for req.params
 
   const response = await fetch(
     `http://api.duckduckgo.com/ac?q=${query}&format=json`
@@ -102,6 +148,10 @@ app.get("/search=:query", async (req, res) => {
 
 app.setNotFoundHandler((req, res) => {
   res.sendFile("index.html"); // SPA catch-all
+});
+
+app.listen({
+  port: 8080
 });
 
 app.listen({
